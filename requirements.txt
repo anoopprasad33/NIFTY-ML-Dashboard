@@ -1,0 +1,15 @@
+streamlit
+yfinance
+pandas
+numpy
+scikit-learn
+xgboost
+ta
+mplfinance
+joblib
+plotly
+gspread
+oauth2client
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
