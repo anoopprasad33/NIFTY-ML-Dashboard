@@ -1,4 +1,4 @@
-# app.py (Upgraded Streamlit dashboard with Buy/Sell markers + UI improvements)
+# app.py - Upgraded NIFTY ML Dashboard
 
 import os
 import joblib
@@ -20,8 +20,8 @@ def download_nifty_daily(start="1996-01-01"):
     df.dropna(inplace=True)
     return df
 
-# -------------- FEATURES --------------
-def add_features_daily(df):
+# -------------- INDICATORS --------------
+def add_indicators(df):
     df = df.copy()
     df['Ret1'] = df['Close'].pct_change(1)
     df['Ret2'] = df['Close'].pct_change(2)
@@ -30,6 +30,28 @@ def add_features_daily(df):
     df['MA20'] = df['Close'].rolling(20).mean()
     df['MA50'] = df['Close'].rolling(50).mean()
     df['MA200'] = df['Close'].rolling(200).mean()
+
+    # RSI
+    delta = df['Close'].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.rolling(14).mean()
+    avg_loss = loss.rolling(14).mean()
+    rs = avg_gain / avg_loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+
+    # MACD
+    df['EMA12'] = df['Close'].ewm(span=12, adjust=False).mean()
+    df['EMA26'] = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = df['EMA12'] - df['EMA26']
+    df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+
+    # Bollinger Bands
+    df['BB_mid'] = df['Close'].rolling(20).mean()
+    std = df['Close'].rolling(20).std()
+    df['BB_upper'] = df['BB_mid'] + 2*std
+    df['BB_lower'] = df['BB_mid'] - 2*std
+
     df.dropna(inplace=True)
     return df
 
@@ -42,111 +64,118 @@ def label_signal(prob):
 
 # -------------- LOAD MODEL --------------
 def load_models():
-    models = {}
-    models['nifty'] = joblib.load(MODEL_NIFTY_PATH) if os.path.exists(MODEL_NIFTY_PATH) else None
-    models['combined'] = joblib.load(MODEL_COMB_PATH) if os.path.exists(MODEL_COMB_PATH) else None
-    return models
+    return {
+        "nifty": joblib.load(MODEL_NIFTY_PATH) if os.path.exists(MODEL_NIFTY_PATH) else None,
+        "combined": joblib.load(MODEL_COMB_PATH) if os.path.exists(MODEL_COMB_PATH) else None
+    }
 
-# -------------- STREAMLIT UI --------------
-st.set_page_config(page_title="NIFTY 5-Day ML Dashboard", layout="wide")
-st.title("📈 NIFTY 5-Day ML Prediction Dashboard")
+# -------------- UI --------------
+st.set_page_config(page_title="NIFTY ML Dashboard", layout="wide")
+st.title("📊 NIFTY 5-Day ML Prediction + Technical Dashboard")
 
-# Layout
-left, right = st.columns([2, 1])
+# Sidebar
+st.sidebar.header("⚙ Chart Controls")
+show_ma10 = st.sidebar.checkbox("MA10", True)
+show_ma20 = st.sidebar.checkbox("MA20", False)
+show_ma50 = st.sidebar.checkbox("MA50", True)
+show_ma200 = st.sidebar.checkbox("MA200", True)
+show_bb = st.sidebar.checkbox("Bollinger Bands", True)
+show_rsi = st.sidebar.checkbox("RSI", False)
+show_macd = st.sidebar.checkbox("MACD", False)
 
-# Load data
+# Data & features
 df = download_nifty_daily()
-df_feat = add_features_daily(df)
+df = add_indicators(df)
 models = load_models()
 
-# Prepare last input features
+# ML Input
 feature_cols = ['Ret1','Ret2','Ret5','MA10','MA20','MA50','MA200']
-last_X = df_feat.iloc[-1:][feature_cols]
+last_X = df.iloc[-1:][feature_cols]
 
 # Predictions
-pred_out = {}
-for m in models:
-    if models[m]:
-        p = float(models[m].predict_proba(last_X)[0, 1])
-        lbl, icon = label_signal(p)
-        pred_out[m] = {"prob": p, "label": lbl, "icon": icon}
+predictions = {}
+for k, model in models.items():
+    if model:
+        prob = float(model.predict_proba(last_X)[0,1])
+        lbl, icon = label_signal(prob)
+        predictions[k] = (prob, lbl, icon)
     else:
-        pred_out[m] = {"prob": None, "label": "No Model", "icon": "⚪"}
+        predictions[k] = (None, "No Model", "⚪")
 
-# ---------------- LEFT SIDE: CHART ----------------
-with left:
-    st.subheader("NIFTY Price Chart with Signals")
+# ML Signals on chart
+df['ML_signal'] = None
+for i in range(200, len(df)):
+    try:
+        Xrow = df.iloc[i:i+1][feature_cols]
+        p = float(models['nifty'].predict_proba(Xrow)[0,1])
+        df.loc[df.index[i], 'ML_signal'] = "BUY" if p > 0.55 else ("SELL" if p < 0.45 else None)
+    except:
+        continue
 
-    dfc = df.copy()
-    dfc['Signal'] = None
+# -------------- CHART --------------
+st.subheader("📈 Price + Indicators + ML Signals")
 
-    # ✅ FIX: Ensure required columns exist before plotting
-    dfc['MA50'] = dfc['Close'].rolling(50).mean()
-    dfc['MA200'] = dfc['Close'].rolling(200).mean()
-    dfc.dropna(inplace=True)
+fig = go.Figure()
 
-    # Generate signals for chart markers
-    for i in range(1, len(dfc)):
-        dfc.loc[dfc.index[i], 'Signal'] = "BUY" if dfc['Close'].iloc[i] > dfc['MA50'].iloc[i] else "SELL"
+# Candles
+fig.add_trace(go.Candlestick(
+    x=df.index, open=df.Open, high=df.High,
+    low=df.Low, close=df.Close, name="Price"
+))
 
-    fig = go.Figure()
+# MAs
+if show_ma10:  fig.add_trace(go.Scatter(x=df.index, y=df.MA10, name="MA10"))
+if show_ma20:  fig.add_trace(go.Scatter(x=df.index, y=df.MA20, name="MA20"))
+if show_ma50:  fig.add_trace(go.Scatter(x=df.index, y=df.MA50, name="MA50"))
+if show_ma200: fig.add_trace(go.Scatter(x=df.index, y=df.MA200, name="MA200"))
 
-    # Candlestick chart
-    fig.add_trace(go.Candlestick(
-        x=dfc.index, open=dfc["Open"], high=dfc["High"],
-        low=dfc["Low"], close=dfc["Close"], name="NIFTY"
-    ))
+# Bollinger
+if show_bb:
+    fig.add_trace(go.Scatter(x=df.index, y=df.BB_upper, name="BB Upper", line=dict(dash='dot')))
+    fig.add_trace(go.Scatter(x=df.index, y=df.BB_lower, name="BB Lower", line=dict(dash='dot')))
 
-    # ✅ Safe MA plotting
-    if "MA50" in dfc.columns:
-        fig.add_trace(go.Scatter(x=dfc.index, y=dfc["MA50"], name="MA50"))
-    if "MA200" in dfc.columns:
-        fig.add_trace(go.Scatter(x=dfc.index, y=dfc["MA200"], name="MA200"))
+# ML Buy/Sell markers
+buy_ml = df[df.ML_signal == "BUY"]
+sell_ml = df[df.ML_signal == "SELL"]
 
-    # Buy/Sell markers
-    buys = dfc[dfc.Signal == "BUY"]
-    sells = dfc[dfc.Signal == "SELL"]
+fig.add_trace(go.Scatter(
+    x=buy_ml.index, y=buy_ml.Close, mode="markers",
+    marker=dict(color="lime", size=13, symbol="triangle-up"), name="ML BUY"
+))
+fig.add_trace(go.Scatter(
+    x=sell_ml.index, y=sell_ml.Close, mode="markers",
+    marker=dict(color="red", size=13, symbol="triangle-down"), name="ML SELL"
+))
 
-    fig.add_trace(go.Scatter(
-        x=buys.index, y=buys['Close'],
-        mode="markers",
-        marker=dict(symbol="triangle-up", size=12, color="green"),
-        name="BUY"
-    ))
+fig.update_layout(height=620, xaxis_rangeslider_visible=False)
+st.plotly_chart(fig, use_container_width=True)
 
-    fig.add_trace(go.Scatter(
-        x=sells.index, y=sells['Close'],
-        mode="markers",
-        marker=dict(symbol="triangle-down", size=12, color="red"),
-        name="SELL"
-    ))
+# -------------- OPTIONAL PANELS --------------
+if show_rsi:
+    st.subheader("RSI (14)")
+    st.line_chart(df['RSI'])
 
-    fig.update_layout(height=600, xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig, use_container_width=True)
+if show_macd:
+    st.subheader("MACD")
+    st.line_chart(df[['MACD','MACD_signal']])
 
-# ---------------- RIGHT SIDE: PREDICTIONS ----------------
-with right:
-    st.subheader("📊 Model Prediction (Next 5 Days)")
+# -------------- PREDICTIONS --------------
+st.subheader("🤖 Model Forecast (Next 5 Days)")
+c1, c2 = st.columns(2)
 
-    for key in ["nifty", "combined"]:
-        v = pred_out[key]
-        if v["prob"] is not None:
-            st.metric(
-                label=f"{key.upper()} Model",
-                value=f"{v['icon']} {v['label']}",
-                delta=f"{round(v['prob'] * 100, 2)}% confidence"
-            )
-        else:
-            st.metric(label=f"{key.upper()} Model", value="⚪ No model loaded")
-
-    st.write("---")
-    st.subheader("⚙ Actions")
-
-    if st.button("🔁 Reload Model"):
-        st.rerun()
-
-    if st.button("♻ Retrain Model (Offline Logic Placeholder)"):
-        st.info("Retraining is not configured live. Train offline & replace model files.")
+for i,(name,data) in enumerate(predictions.items()):
+    prob, label, icon = data
+    if prob:
+        (c1 if i==0 else c2).metric(
+            f"{name.upper()} Model",
+            f"{icon} {label}",
+            f"{round(prob*100,2)}% confidence"
+        )
+    else:
+        (c1 if i==0 else c2).metric(f"{name.upper()} Model", "⚪ Not Loaded")
 
 st.write("---")
-st.caption("Tip: BUY/SELL signals on chart based on MA trend for visualization. ML predicts next 5 days direction.")
+if st.button("🔁 Reload Dashboard"):
+    st.rerun()
+
+st.caption("💡 Indicators are toggleable from sidebar | ML signals plotted on chart | Forecast for next 5 days")
