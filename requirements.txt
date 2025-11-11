@@ -1,0 +1,10 @@
+streamlit
+yfinance
+pandas
+numpy
+scikit-learn
+xgboost
+ta
+mplfinance
+joblib
+plotly
