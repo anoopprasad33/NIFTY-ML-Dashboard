@@ -79,7 +79,7 @@ with left:
 
     dfc = df.copy()
     dfc['Signal'] = None
-dfc['MA50'] = dfc['Close'].rolling(50).mean()
+    dfc['MA50'] = dfc['Close'].rolling(50).mean()
 
     # Generate signals for whole dataset (fake historical signals for markers)
     for i in range(1, len(dfc)):
@@ -143,3 +143,4 @@ with right:
 
 st.write("---")
 st.caption("Tip: BUY/SELL signals on chart based on MA trend for visualization. ML predicts next 5 days direction.")
+
