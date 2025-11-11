@@ -67,11 +67,11 @@ last_X = df_feat.iloc[-1:][feature_cols]
 pred_out = {}
 for m in models:
     if models[m]:
-        p = float(models[m].predict_proba(last_X)[0,1])
+        p = float(models[m].predict_proba(last_X)[0, 1])
         lbl, icon = label_signal(p)
-        pred_out[m] = {"prob":p, "label":lbl, "icon":icon}
+        pred_out[m] = {"prob": p, "label": lbl, "icon": icon}
     else:
-        pred_out[m] = {"prob":None, "label":"No Model", "icon":"⚪"}
+        pred_out[m] = {"prob": None, "label": "No Model", "icon": "⚪"}
 
 # ---------------- LEFT SIDE: CHART ----------------
 with left:
@@ -79,9 +79,13 @@ with left:
 
     dfc = df.copy()
     dfc['Signal'] = None
-    dfc['MA50'] = dfc['Close'].rolling(50).mean()
 
-    # Generate signals for whole dataset (fake historical signals for markers)
+    # ✅ FIX: Ensure required columns exist before plotting
+    dfc['MA50'] = dfc['Close'].rolling(50).mean()
+    dfc['MA200'] = dfc['Close'].rolling(200).mean()
+    dfc.dropna(inplace=True)
+
+    # Generate signals for chart markers
     for i in range(1, len(dfc)):
         dfc.loc[dfc.index[i], 'Signal'] = "BUY" if dfc['Close'].iloc[i] > dfc['MA50'].iloc[i] else "SELL"
 
@@ -93,9 +97,11 @@ with left:
         low=dfc["Low"], close=dfc["Close"], name="NIFTY"
     ))
 
-    # Moving Averages
-    fig.add_trace(go.Scatter(x=dfc.index, y=dfc["MA50"], name="MA50"))
-    fig.add_trace(go.Scatter(x=dfc.index, y=dfc["MA200"], name="MA200"))
+    # ✅ Safe MA plotting
+    if "MA50" in dfc.columns:
+        fig.add_trace(go.Scatter(x=dfc.index, y=dfc["MA50"], name="MA50"))
+    if "MA200" in dfc.columns:
+        fig.add_trace(go.Scatter(x=dfc.index, y=dfc["MA200"], name="MA200"))
 
     # Buy/Sell markers
     buys = dfc[dfc.Signal == "BUY"]
@@ -128,19 +134,19 @@ with right:
             st.metric(
                 label=f"{key.upper()} Model",
                 value=f"{v['icon']} {v['label']}",
-                delta=f"{round(v['prob']*100, 2)}% confidence"
+                delta=f"{round(v['prob'] * 100, 2)}% confidence"
             )
         else:
             st.metric(label=f"{key.upper()} Model", value="⚪ No model loaded")
 
     st.write("---")
     st.subheader("⚙ Actions")
+
     if st.button("🔁 Reload Model"):
-        st.experimental_rerun()
+        st.rerun()
 
     if st.button("♻ Retrain Model (Offline Logic Placeholder)"):
         st.info("Retraining is not configured live. Train offline & replace model files.")
 
 st.write("---")
 st.caption("Tip: BUY/SELL signals on chart based on MA trend for visualization. ML predicts next 5 days direction.")
-
